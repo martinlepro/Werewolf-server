@@ -1,3 +1,4 @@
+import { loadProfanities } from './src/profanityLoader.js';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'node:http';
