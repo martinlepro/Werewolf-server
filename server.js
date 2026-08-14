@@ -18,6 +18,13 @@ const io = new Server(httpServer, {
   pingTimeout: 20000,
 });
 
+await loadProfanities({
+  dir: './data/ldnoobw',
+  languages: [null], 
+});
+
+registerHandlers(io, manager);
+
 const manager = new GameManager(io);
 registerHandlers(io, manager);
 setInterval(() => io.emit('lobbyStats', manager.lobbyStats()), 4000);
