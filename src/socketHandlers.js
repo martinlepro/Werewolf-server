@@ -1,3 +1,11 @@
+// --- En-tête de src/socketHandlers.js -----------------------------------------
+import { CONFIG, PHASES, normalizeNickname } from './config.js';
+import {
+  inspectNickname,
+  fallbackNickname,
+  NicknameError,
+} from './nicknameGuard.js';
+import { getRole } from './roles.js';
 import { PHASES, normalizeNickname } from './config.js';
 import { getRole } from './roles.js';
 
