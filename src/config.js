@@ -5,6 +5,18 @@ export function normalizeNickname(value) {
     .trim();
 }
 
+const INVISIBLE_STRIP =
+  /[\u0000-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/gu;
+
+export function normalizeNickname(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .replace(INVISIBLE_STRIP, '')
+    .replace(/[\u00A0\u1680\u2000-\u200A\u205F\u3000]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
 export const CONFIG = {
   MIN_PLAYERS: 4,
   MAX_PLAYERS: 20,
