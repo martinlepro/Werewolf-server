@@ -3,6 +3,9 @@ import { CONFIG, PHASES, TEAMS, normalizeNickname } from './config.js';
 import { ROLES, getRole, defaultComposition } from './roles.js';
 import { resolveNight } from './nightResolver.js';
 import { checkWin } from './winConditions.js';
+import { CONFIG, PHASES, canonicalizeNickname } from './config.js';
+import { assertValidNickname } from './nicknameGuard.js';
+import { getRole } from './roles.js';
 
 const genCode = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', CONFIG.CODE_LENGTH);
 
