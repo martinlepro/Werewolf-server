@@ -32,30 +32,93 @@ export class Game {
     this.addPlayer(hostId, hostName);
   }
 
-  // ---------- Joueurs ----------
-  addPlayer(id, name) {
-    if (this.phase !== PHASES.LOBBY) throw new Error('Partie déjà commencée');
-    if (this.players.size >= CONFIG.MAX_PLAYERS) throw new Error('Partie pleine');
+    /**
+   * Ajoute un joueur à la partie.
+   *
+   * Sécurité :
+   *  - `assertValidNickname` bloque les pseudos réservés, injections,
+   *    homoglyphes, scripts mixés et grossièretés.
+   *  - L'unicité est vérifiée sur la clé CANONIQUE : « Admin », « Àdmın »
+   *    et « аdmin » sont considérés comme le même pseudo.
+   *
+   * @param {string} id      Identifiant persistant du joueur.
+   * @param {string} rawName Pseudo brut envoyé par le client.
+   * @returns {object}       Le joueur créé.
+   * @throws {Error|NicknameError}
+   */
+  addPlayer(id, rawName) {
+    if (!id) {
+      throw new Error('Identifiant joueur invalide');
+    }
 
-    const normalizedName = normalizeNickname(name);
-    if (normalizedName.length < 2) throw new Error('Le pseudo doit contenir au moins 2 caractères');
-    const nameKey = normalizedName.toLocaleLowerCase();
-    if (this.allPlayers().some(p => normalizeNickname(p.name).toLocaleLowerCase() === nameKey)) {
+    if (this.phase !== PHASES.LOBBY) {
+      throw new Error('La partie a déjà commencé');
+    }
+
+    if (this.players.size >= (this.options?.maxPlayers ?? CONFIG.MAX_PLAYERS)) {
+      throw new Error('La partie est complète');
+    }
+
+    // 1. Validation de sécurité (lève une NicknameError si refusé)
+    const { name, key } = assertValidNickname(rawName);
+
+    // 2. Unicité sur la forme canonique (anti-usurpation par homoglyphe)
+    const collision = this.allPlayers().some(
+      (p) => p.id !== id && canonicalizeNickname(p.name) === key
+    );
+
+    if (collision) {
       throw new Error('Ce pseudo est déjà utilisé dans cette partie');
     }
 
-    this.players.set(id, {
-      id, name: normalizedName,
+    // 3. Création
+    const player = {
+      id,
+      name,
+      nameKey: key,        // clé canonique conservée pour comparaisons rapides
       role: null,
       alive: true,
       connected: true,
       isMayor: false,
       infected: false,
+      isLover: false,
       lastGuarded: null,
       disconnectedAt: null,
-    });
+      joinedAt: Date.now(),
+    };
+
+    this.players.set(id, player);
+
+    if (!this.hostId) {
+      this.hostId = id;
+    }
+
+    return player;
   }
 
+  /**
+   * Renommage en cours de lobby, avec les mêmes garde-fous.
+   * @param {string} id
+   * @param {string} rawName
+   */
+  renamePlayer(id, rawName) {
+    const player = this.players.get(id);
+    if (!player) throw new Error('Joueur introuvable');
+    if (this.phase !== PHASES.LOBBY) {
+      throw new Error('Impossible de changer de pseudo en cours de partie');
+    }
+
+    const { name, key } = assertValidNickname(rawName);
+
+    const collision = this.allPlayers().some(
+      (p) => p.id !== id && canonicalizeNickname(p.name) === key
+    );
+    if (collision) throw new Error('Ce pseudo est déjà utilisé dans cette partie');
+
+    player.name = name;
+    player.nameKey = key;
+    return player;
+  }
   removePlayer(id) {
     if (this.phase === PHASES.LOBBY) {
       this.players.delete(id);
