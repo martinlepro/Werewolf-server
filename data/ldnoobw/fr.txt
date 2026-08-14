@@ -1,0 +1,4 @@
+# Un mot par ligne. Les lignes vides et celles commençant par # sont ignorées.
+connard
+salope
+enculé
