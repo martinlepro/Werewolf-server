@@ -8,6 +8,12 @@ import { registerHandlers } from './src/socketHandlers.js';
 
 const app = express();
 app.use(cors());
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+app.get('/', (_, res) => res.sendFile(path.join(__dirname, 'public/home.html')));
+app.get(['/play', '/play/:gameId'], (_, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
 app.use(express.json());
 app.use(express.static('public')); // ton HTML/CSS/JS client
 app.use('/images', express.static('public/images')); // assets du lobby
