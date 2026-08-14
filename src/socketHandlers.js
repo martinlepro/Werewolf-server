@@ -11,154 +11,140 @@ import { getRole } from './roles.js';
 
 export function registerHandlers(io, manager) {
   const broadcastLobbyStats = () => io.emit('lobbyStats', manager.lobbyStats());
+
   io.on('connection', (socket) => {
     broadcastLobbyStats();
     socket.on('requestLobbyStats', () => socket.emit('lobbyStats', manager.lobbyStats()));
+
     let playerId = null;
 
-    const err = (msg) => {
-      socket.emit('errorMsg', { message: String(msg) });
+    const err = (msg, code = 'ERROR') => {
+      socket.emit('errorMsg', { code, message: String(msg) });
     };
 
-    // ---- Identification ----
+    /** Convertit proprement une NicknameError en message client. */
+    const failNickname = (error) => {
+      if (error instanceof NicknameError) {
+        socket.emit('nicknameRejected', {
+          code: error.code,
+          message: error.message,
+        });
+        return err(error.message, error.code);
+      }
+      return err(error.message ?? 'Erreur inconnue');
+    };
+
+    // ---- Identification ------------------------------------------------------
     socket.on('identify', (data = {}) => {
       const { id, name } = data;
 
-      if (!id) {
-        return err('Identifiant joueur invalide');
-      }
+      if (!id) return err('Identifiant joueur invalide', 'BAD_ID');
 
-      playerId = String(id);
+      playerId = String(id).slice(0, 64);
       socket.join(`p:${playerId}`);
 
-      socket.data.name = normalizeNickname(
-        name ?? 'Joueur'
-      ).slice(0, 20);
+      // Le pseudo est validé ici ; en cas d'échec on notifie le client
+      // et on assigne un pseudo de repli plutôt que de rompre la connexion.
+      const check = inspectNickname(name ?? '');
+
+      if (check.ok) {
+        socket.data.name = check.name;
+        socket.data.nameKey = check.key;
+      } else {
+        socket.data.name = fallbackNickname();
+        socket.data.nameKey = null;
+        socket.emit('nicknameRejected', {
+          code: check.code,
+          message: check.message,
+          suggestion: socket.data.name,
+        });
+      }
 
       socket.emit('identified', {
         id: playerId,
         name: socket.data.name,
+        nicknameAccepted: check.ok,
       });
     });
 
-    const requireIdentity = () => {
-      if (!playerId) {
-        err('Tu dois d’abord renseigner ton pseudo');
-        return false;
-      }
+    // ---- Vérification préalable côté client (facultatif mais recommandé) -----
+    socket.on('checkNickname', (data = {}, ack) => {
+      const result = inspectNickname(data.name ?? '');
+      const payload = result.ok
+        ? { ok: true, name: result.name }
+        : { ok: false, code: result.code, message: result.message };
 
-      return true;
-    };
+      if (typeof ack === 'function') ack(payload);
+      else socket.emit('nicknameChecked', payload);
+    });
 
-    const requireGame = () => {
-      if (!requireIdentity()) return null;
-
-      const g = manager.gameOf(playerId);
-
-      if (!g) {
-        err('Aucune partie en cours');
-        return null;
-      }
-
-      return g;
-    };
-
-    const requireAlive = (g) => {
-      const p = g.getPlayer(playerId);
-
-      if (!p) {
-        err('Joueur introuvable');
-        return null;
-      }
-
-      if (!p.alive) {
-        err('Action réservée aux vivants');
-        return null;
-      }
-
-      return p;
-    };
-
-    // ---- Création d'une partie ----
-    socket.on('createGame', (opts = {}, cb) => {
+    // ---- Création de partie ---------------------------------------------------
+    socket.on('createGame', (data = {}) => {
       try {
-        if (!requireIdentity()) {
-          return cb?.({
-            ok: false,
-            error: 'Tu dois d’abord renseigner ton pseudo',
-          });
-        }
+        const check = inspectNickname(data.name ?? socket.data.name);
+        if (!check.ok) throw new NicknameError(check.code, check.message);
 
-        if (!socket.data.name || socket.data.name.length < 2) {
-          return cb?.({
-            ok: false,
-            error: 'Pseudo invalide',
-          });
-        }
+        socket.data.name = check.name;
 
-        const g = manager.create(
+        const game = manager.create(playerId, check.name, data.options ?? {});
+        socket.join(`g:${game.code}`);
+        socket.emit('gameCreated', { code: game.code });
+        broadcastLobbyStats();
+      } catch (error) {
+        failNickname(error);
+      }
+    });
+
+    // ---- Rejoindre une partie -------------------------------------------------
+    socket.on('joinGame', (data = {}) => {
+      try {
+        const check = inspectNickname(data.name ?? socket.data.name);
+        if (!check.ok) throw new NicknameError(check.code, check.message);
+
+        socket.data.name = check.name;
+
+        const game = manager.join(
+          String(data.code ?? '').trim().toUpperCase(),
           playerId,
-          socket.data.name,
-          opts && typeof opts === 'object' ? opts : {}
+          check.name,
+          data.password
         );
 
-        socket.join(`g:${g.code}`);
-
-        const response = {
-          ok: true,
-          code: g.code,
-          playerId,
-          name: socket.data.name,
-          isHost: true,
-        };
-
-        socket.emit('gameCreated', response);
-        cb?.(response);
-
-        // Envoie immédiatement la liste des joueurs au lobby
-        g.pushState();
+        socket.join(`g:${game.code}`);
+        socket.emit('gameJoined', { code: game.code });
         broadcastLobbyStats();
-      } catch (e) {
-        cb?.({
-          ok: false,
-          error: e?.message || 'Impossible de créer la partie',
-        });
+      } catch (error) {
+        failNickname(error);
       }
     });
 
-    // ---- Rejoindre une partie ----
-socket.on('joinGame', async (data = {}, cb) => {
-  try {
-    if (!requireIdentity()) {
-      return cb?.({
-        ok: false,
-        error: 'Tu dois d’abord renseigner ton pseudo',
-      });
-    }
+    // ---- Renommage dans le lobby ----------------------------------------------
+    socket.on('renamePlayer', (data = {}) => {
+      try {
+        const game = manager.gameOf(playerId);
+        if (!game) return err('Aucune partie en cours');
 
-    const code = String(data.code ?? '')
-      .trim()
-      .toUpperCase();
+        const player = game.renamePlayer(playerId, data.name);
+        socket.data.name = player.name;
 
-    if (!code) {
-      return cb?.({
-        ok: false,
-        error: 'Code de partie manquant',
-      });
-    }
+        game.broadcast('playerRenamed', { id: playerId, name: player.name });
+        broadcastLobbyStats();
+      } catch (error) {
+        failNickname(error);
+      }
+    });
 
-    if (!socket.data.name || socket.data.name.length < 2) {
-      return cb?.({
-        ok: false,
-        error: 'Pseudo invalide',
-      });
-    }
+    // ... le reste de tes handlers (nightAction, vote, chat, etc.) inchangé ...
 
-    const g = manager.join(
-      code,
-      playerId,
-      socket.data.name
-    );
+    // ---- Déconnexion -----------------------------------------------------------
+    socket.on('disconnect', () => {
+      if (playerId) {
+        manager.leave(playerId);
+        broadcastLobbyStats();
+      }
+    });
+  });
+}
 
     // Attendre que le joueur rejoigne réellement la room
     await socket.join(`g:${g.code}`);
