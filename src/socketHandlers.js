@@ -6,8 +6,6 @@ import {
   NicknameError,
 } from './nicknameGuard.js';
 import { getRole } from './roles.js';
-import { PHASES, normalizeNickname } from './config.js';
-import { getRole } from './roles.js';
 
 export function registerHandlers(io, manager) {
   const broadcastLobbyStats = () => io.emit('lobbyStats', manager.lobbyStats());
@@ -32,6 +30,30 @@ export function registerHandlers(io, manager) {
         return err(error.message, error.code);
       }
       return err(error.message ?? 'Erreur inconnue');
+    };
+
+    /** Récupère la partie du joueur courant, ou notifie une erreur et renvoie null. */
+    const requireGame = () => {
+      const g = manager.gameOf(playerId);
+      if (!g) {
+        err('Aucune partie en cours');
+        return null;
+      }
+      return g;
+    };
+
+    /** Récupère le joueur courant dans la partie, à condition qu'il soit vivant. */
+    const requireAlive = (g) => {
+      const p = g.getPlayer(playerId);
+      if (!p) {
+        err('Joueur introuvable');
+        return null;
+      }
+      if (!p.alive) {
+        err('Tu es mort, tu ne peux plus agir');
+        return null;
+      }
+      return p;
     };
 
     // ---- Identification ------------------------------------------------------
@@ -134,56 +156,6 @@ export function registerHandlers(io, manager) {
       }
     });
 
-    // ... le reste de tes handlers (nightAction, vote, chat, etc.) inchangé ...
-
-    // ---- Déconnexion -----------------------------------------------------------
-    socket.on('disconnect', () => {
-      if (playerId) {
-        manager.leave(playerId);
-        broadcastLobbyStats();
-      }
-    });
-  });
-}
-
-    // Attendre que le joueur rejoigne réellement la room
-    await socket.join(`g:${g.code}`);
-
-    const player = g.getPlayer(playerId);
-
-    if (!player) {
-      throw new Error("Le joueur n'a pas été ajouté à la partie");
-    }
-
-    if (player.role && getRole(player.role)?.isWolf) {
-      await socket.join(`w:${g.code}`);
-    }
-
-    const response = {
-      ok: true,
-      code: g.code,
-      playerId,
-      name: player.name,
-      isHost: g.hostId === playerId,
-    };
-
-    socket.emit('joined', response);
-    cb?.(response);
-
-    // Laisse le client afficher le lobby, puis actualise la liste
-    setTimeout(() => {
-      g.pushState();
-      broadcastLobbyStats();
-    }, 0);
-  } catch (e) {
-    console.error('Erreur joinGame :', e);
-
-    cb?.({
-      ok: false,
-      error: e?.message || 'Impossible de rejoindre la partie',
-    });
-  }
-});
     // ---- Lancer la partie ----
     socket.on('startGame', () => {
       const g = requireGame();
@@ -515,7 +487,7 @@ export function registerHandlers(io, manager) {
       g.broadcast('chat', payload);
     });
 
-    // ---- Déconnexion ----
+    // ---- Déconnexion -----------------------------------------------------------
     socket.on('disconnect', () => {
       if (playerId) {
         manager.leave(playerId);
