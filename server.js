@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadProfanities } from './src/profanityLoader.js';
 import express from 'express';
 import cors from 'cors';
@@ -6,15 +8,18 @@ import { Server } from 'socket.io';
 import { GameManager } from './src/GameManager.js';
 import { registerHandlers } from './src/socketHandlers.js';
 
-const app = express();
-app.use(cors());
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Landing page sur / et lobby/jeu sur /play (+ /play/:gameId pour les liens de partie
+// partageables) : ces routes doivent être déclarées AVANT express.static('public'),
+// sinon express.static servirait déjà public/index.html sur "/" en premier.
 app.get('/', (_, res) => res.sendFile(path.join(__dirname, 'public/home.html')));
 app.get(['/play', '/play/:gameId'], (_, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
-app.use(express.json());
+
 app.use(express.static('public')); // ton HTML/CSS/JS client
 app.use('/images', express.static('public/images')); // assets du lobby
 
@@ -28,8 +33,6 @@ await loadProfanities({
   dir: './data/ldnoobw',
   languages: [null], 
 });
-
-registerHandlers(io, manager);
 
 const manager = new GameManager(io);
 registerHandlers(io, manager);
